@@ -244,6 +244,12 @@
     pointer-events: none !important;
 }
 
+/* Reserve room for the badge (32px width + 12px inset + 8px gap) so titles and dates never run under it */
+.video-container-ezBpK:has(.upcoming-watched-container-msCaq) .info-container-xyynk {
+    padding-right: 52px !important;
+    box-sizing: border-box !important;
+}
+
 /* Hide default SVG icons and text labels */
 .video-container-ezBpK .upcoming-watched-container-msCaq .flag-icon-RDrvf,
 .video-container-ezBpK .upcoming-watched-container-msCaq .flag-label-zJloD {

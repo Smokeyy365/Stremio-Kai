@@ -830,14 +830,11 @@
       const episodes = container.querySelectorAll(CONFIG.EPISODE_ITEM);
 
       for (const episodeEl of episodes) {
-        const thumbnailEl = episodeEl.querySelector(
-          ".thumbnail-container-Zm8Cl",
-        );
         const watchedEl = episodeEl.querySelector(
           ".upcoming-watched-container-msCaq",
         );
-        if (thumbnailEl && watchedEl && watchedEl.parentNode !== thumbnailEl) {
-          thumbnailEl.appendChild(watchedEl);
+        if (watchedEl && watchedEl.parentNode !== episodeEl) {
+          episodeEl.appendChild(watchedEl);
         }
 
         if (episodeEl.classList.contains("spe-processed")) continue;
@@ -1598,13 +1595,12 @@
       ".video-container-ezBpK:not(.spe-drawer-processed)",
     );
     for (const episodeEl of unprocessed) {
-      const thumbnailEl = episodeEl.querySelector(".thumbnail-container-Zm8Cl");
       const watchedEl = episodeEl.querySelector(
         ".upcoming-watched-container-msCaq",
       );
-      if (thumbnailEl && watchedEl) {
-        if (watchedEl.parentNode !== thumbnailEl) {
-          thumbnailEl.appendChild(watchedEl);
+      if (watchedEl) {
+        if (watchedEl.parentNode !== episodeEl) {
+          episodeEl.appendChild(watchedEl);
         }
         episodeEl.classList.add("spe-drawer-processed");
       }

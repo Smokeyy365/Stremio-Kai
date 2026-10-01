@@ -578,23 +578,26 @@ local function shader_is_active(path)
     return flat:find(target, 1, true) ~= nil, raw
 end
 
-local function svp_is_active()
+local function vf_is_active(vf_label)
     local labels = {}
     local on = false
     for _, f in ipairs(mp.get_property_native("vf") or {}) do
         labels[#labels + 1] = tostring(f.label or f.name)
-        if f.label == "SVP" and f.enabled ~= false then on = true end
+        if f.label == vf_label and f.enabled ~= false then on = true end
     end
     return on, "vf=[" .. table.concat(labels, ",") .. "]"
 end
 
--- Run `command`, then show the settled state of `is_active` on the OSD.
-local function toggle_and_report(label, suffix, command, is_active)
-    local ok, err = mp.commandv((table.unpack or unpack)(command))
-    if not ok then
-        log("[Toggle] " .. label .. " failed: " .. tostring(err))
-        mp.osd_message(label .. ": FAILED (" .. tostring(err) .. ")", 4)
-        return
+-- Run each command in `commands` (a list of argument lists), then show the
+-- settled state reported by `is_active` on the OSD.
+local function toggle_and_report(label, suffix, commands, is_active)
+    for _, command in ipairs(commands) do
+        local ok, err = mp.commandv((table.unpack or unpack)(command))
+        if not ok then
+            log("[Toggle] " .. label .. " failed: " .. tostring(err))
+            mp.osd_message(label .. ": FAILED (" .. tostring(err) .. ")", 4)
+            return
+        end
     end
     local immediate = is_active()
     mp.add_timeout(TOGGLE_SETTLE_SECONDS, function()
@@ -608,8 +611,18 @@ end
 -- args: <shader path> <label> [suffix]
 mp.register_script_message("toggle-shader", function(path, label, suffix)
     toggle_and_report(label, suffix,
-        { "change-list", "glsl-shaders", "toggle", path },
+        { { "change-list", "glsl-shaders", "toggle", path } },
         function() return shader_is_active(path) end)
+end)
+
+-- args: <label> <vf label to check> <vf spec> [<vf spec> ...]
+-- Toggles every spec; the state shown is that of the filter carrying <vf label>.
+mp.register_script_message("toggle-vf", function(label, vf_label, ...)
+    local commands = {}
+    for _, spec in ipairs({ ... }) do
+        commands[#commands + 1] = { "vf", "toggle", spec }
+    end
+    toggle_and_report(label, nil, commands, function() return vf_is_active(vf_label) end)
 end)
 
 -- args: [deint]  -> also toggles BWDIF deinterlacing
@@ -622,7 +635,8 @@ mp.register_script_message("toggle-svp", function(mode)
         spec = VF_FILTERS.bwdif .. "," .. spec
         label = "Deinterlace + SVP"
     end
-    toggle_and_report(label, nil, { "vf", "toggle", spec }, svp_is_active)
+    toggle_and_report(label, nil, { { "vf", "toggle", spec } },
+        function() return vf_is_active("SVP") end)
 end)
 
 

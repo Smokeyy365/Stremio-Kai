@@ -542,6 +542,37 @@ end)
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- MANUAL TOGGLE STATE INDICATORS (F10 / F11 / F12 keybinds)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- input.conf runs the toggle itself, then sends one of these messages so the OSD
+-- reports the real state. mpv's `${?glsl-shaders==path:ON}` can't be used for
+-- this: `==` compares the whole shader list string, so it reads OFF whenever any
+-- other shader (e.g. the anime preset chain) is also loaded.
+
+local function osd_state(label, on, suffix)
+    mp.osd_message(label .. ": " .. (on and "ON" or "OFF") .. (suffix and (" " .. suffix) or ""), 3)
+end
+
+-- args: <shader path> <label> [suffix]
+mp.register_script_message("report-shader-state", function(path, label, suffix)
+    local on = false
+    for _, shader in ipairs(mp.get_property_native("glsl-shaders") or {}) do
+        if shader == path then on = true break end
+    end
+    osd_state(label, on, suffix)
+end)
+
+-- args: <vf label (without @)> <label>
+mp.register_script_message("report-vf-state", function(vf_label, label)
+    local on = false
+    for _, f in ipairs(mp.get_property_native("vf") or {}) do
+        if f.label == vf_label and f.enabled ~= false then on = true break end
+    end
+    osd_state(label, on)
+end)
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- MAIN EXECUTION LATCH
 -- ═══════════════════════════════════════════════════════════════════════════
 

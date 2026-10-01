@@ -963,7 +963,7 @@
     );
     const nvidiaVsrNote = createNote(
       "info",
-      "<strong>Note:</strong> Requires an NVIDIA RTX GPU with up-to-date drivers. Skipped for HDR content, when SVP interpolation is active, and in Vulkan mode.",
+      "<strong>Note:</strong> Requires an NVIDIA RTX GPU with up-to-date drivers. Not used for HDR content, when SVP interpolation is on for the video, or when Vulkan rendering is enabled.",
     );
     nvidiaVsrToggle.appendChild(nvidiaVsrNote);
     injectionFragment.appendChild(nvidiaVsrToggle);

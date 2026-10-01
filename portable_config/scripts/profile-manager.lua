@@ -401,9 +401,9 @@ end
 
 -- Returns the scale to use, or nil plus the reason VSR is skipped.
 local function plan_nvidia_vsr(video_params, is_hdr, vulkan_mode, svp_active)
-    if vulkan_mode then return nil, "Vulkan mode (needs D3D11)" end
+    if vulkan_mode then return nil, "Vulkan rendering is on, VSR needs D3D11" end
     if is_hdr then return nil, "HDR content" end
-    if svp_active then return nil, "SVP is active (needs software frames)" end
+    if svp_active then return nil, "SVP interpolation is on for this video" end
     local scale = compute_vsr_scale(video_params)
     if not scale then return nil, "display or video size unavailable" end
     if scale <= 1.0 then return nil, "video already at or above display size" end

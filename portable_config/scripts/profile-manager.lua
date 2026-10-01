@@ -410,18 +410,77 @@ local function plan_nvidia_vsr(video_params, is_hdr, vulkan_mode, svp_active)
     return scale
 end
 
-local function apply_nvidia_vsr(scale)
-    -- d3d11vpp needs frames kept on the GPU, i.e. D3D11 hardware decoding
-    mp.set_property("hwdec", "d3d11va")
-    local spec = string.format("@%s:d3d11vpp:scaling-mode=nvidia:scale=%.1f", VSR_LABEL, scale)
-    local ok, err = mp.commandv("vf", "append", spec)
-    if not ok then
-        log("[VSR] Failed to append filter: " .. tostring(err))
-        mp.set_property("hwdec", "auto")
-        return false
+local function vsr_diagnostics()
+    return "hwdec-current=" .. tostring(mp.get_property("hwdec-current")) ..
+        ", gpu-api=" .. tostring(mp.get_property("gpu-api")) ..
+        ", gpu-context=" .. tostring(mp.get_property("current-gpu-context")) ..
+        ", vo=" .. tostring(mp.get_property("current-vo")) ..
+        ", display=" .. tostring(mp.get_property("display-width")) .. "x" .. tostring(mp.get_property("display-height")) ..
+        ", video=" .. tostring(mp.get_property("width")) .. "x" .. tostring(mp.get_property("height"))
+end
+
+local function vsr_failed(reason)
+    log("[VSR] FAILED: " .. reason .. " (" .. vsr_diagnostics() .. ")")
+    mp.osd_message("NVIDIA VSR unavailable: " .. reason, 5)
+end
+
+local function vsr_is_filtered()
+    for _, f in ipairs(mp.get_property_native("vf") or {}) do
+        if f.label == VSR_LABEL and f.enabled ~= false then return true end
     end
-    log("[VSR] Applied: " .. spec)
-    return true
+    return false
+end
+
+-- d3d11vpp needs frames kept on the GPU, i.e. plain D3D11 hardware decoding
+-- ("d3d11va-copy" copies frames back to system memory and won't work). The
+-- decoder only switches asynchronously after `hwdec` changes, so wait until mpv
+-- reports it before adding the filter.
+local VSR_HWDEC_TIMEOUT = 4.0
+
+local function apply_nvidia_vsr(scale)
+    local spec = string.format("@%s:d3d11vpp:scaling-mode=nvidia:scale=%.1f", VSR_LABEL, scale)
+
+    local function append_filter()
+        local ok, err = mp.commandv("vf", "append", spec)
+        if not ok then
+            vsr_failed("mpv rejected the d3d11vpp filter (" .. tostring(err) .. ")")
+            return
+        end
+        log("[VSR] Filter appended: " .. spec)
+        -- Verify it survived initialisation
+        mp.add_timeout(1.5, function()
+            if vsr_is_filtered() and mp.get_property("hwdec-current") == "d3d11va" then
+                log("[VSR] Active (" .. vsr_diagnostics() .. ")")
+            else
+                vsr_failed("filter is not active")
+            end
+        end)
+    end
+
+    if mp.get_property("hwdec-current") == "d3d11va" then
+        append_filter()
+        return
+    end
+
+    mp.set_property("hwdec", "d3d11va")
+    local waiting = true
+    local timer
+    local function on_hwdec(_, current)
+        if waiting and current == "d3d11va" then
+            waiting = false
+            mp.unobserve_property(on_hwdec)
+            if timer then timer:kill() end
+            append_filter()
+        end
+    end
+    mp.observe_property("hwdec-current", "string", on_hwdec)
+    timer = mp.add_timeout(VSR_HWDEC_TIMEOUT, function()
+        if not waiting then return end
+        waiting = false
+        mp.unobserve_property(on_hwdec)
+        mp.set_property("hwdec", "auto")
+        vsr_failed("D3D11 hardware decoding did not start")
+    end)
 end
 
 -- Extract filename from path/URL
@@ -745,11 +804,11 @@ function try_execute_profile()
         local svp_active = (is_anime and svp_enabled) or should_run_global_svp
         local vsr_scale, skip_reason = plan_nvidia_vsr(video_params, is_hdr, vulkan_mode, svp_active)
         if vsr_scale then
-            if apply_nvidia_vsr(vsr_scale) then
-                table.insert(osd_parts, string.format("VSR x%.1f", vsr_scale))
-            end
+            table.insert(osd_parts, string.format("VSR x%.1f", vsr_scale))
+            apply_nvidia_vsr(vsr_scale)
         else
-            log("[VSR] Skipped: " .. skip_reason)
+            log("[VSR] Skipped: " .. skip_reason .. " (" .. vsr_diagnostics() .. ")")
+            table.insert(osd_parts, "VSR off: " .. skip_reason)
         end
     end
     

@@ -366,6 +366,30 @@
   }
 
   /**
+   * Request profile metadata for a player route.
+   *
+   * Titles with an IMDb ID are looked up in the metadata DB. Routes without one
+   * (kitsu/mal/anilist-only anime, custom addon IDs, ...) have nothing to look up,
+   * but mpv still needs a message: profile-manager waits for it before applying a
+   * playback profile, and the user's settings travel in the same message.
+   * Anime catalogue IDs in the route are enough to treat the title as anime.
+   */
+  function requestProfileMetadata(state, context) {
+    if (state.id) {
+      waitForMetadata(state.id, state.type, 0, context);
+      return;
+    }
+
+    const entry = state.animeIds
+      ? { isAnime: true, animeReason: "Anime ID in player route" }
+      : null;
+    sendAnimeMetadata(null, entry, state.type);
+    console.log(
+      `[MPV Bridge] No IMDb ID in player route, sent default profile metadata (anime:${!!entry}, type:${state.type})`,
+    );
+  }
+
+  /**
    * Handle route change - check if entering player
    */
   function onRouteChange(event) {
@@ -375,7 +399,7 @@
     window.RouteDetector.invalidateCache();
     const state = window.RouteDetector.getRouteState();
 
-    if (state.view !== "PLAYER" || !state.id) return;
+    if (state.view !== "PLAYER") return;
 
     // Send content type to notify_skip immediately (no async dependency)
     sendContentMetadata(state);
@@ -390,7 +414,7 @@
     sendNotifySkipConfig();
 
     // Wait for metadataHelper for anime detection
-    waitForMetadata(state.id, state.type, 0, {
+    requestProfileMetadata(state, {
       reason: event?.type === "hashchange" ? "hashchange" : "initial-route",
       route: getRouteDiagnostic(state),
       startedAtMs: Date.now(),
@@ -507,7 +531,7 @@
         });
         sendNotifySkipConfig();
         // Re-send anime/profile metadata (HDR, Ultrawide, etc.)
-        waitForMetadata(state.id, state.type, 0, {
+        requestProfileMetadata(state, {
           reason,
           route: getRouteDiagnostic(state),
           startedAtMs: Date.now(),

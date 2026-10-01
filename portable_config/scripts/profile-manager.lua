@@ -545,6 +545,19 @@ end)
 -- MAIN EXECUTION LATCH
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Safety net for the metadata latch: if Stremio's web layer never sends its
+-- metadata (e.g. an unexpected route), apply the profile with defaults after a
+-- while instead of leaving the file with no profile at all.
+local METADATA_FALLBACK_SECONDS = 6.0
+local metadata_fallback_timer = nil
+
+local function cancel_metadata_fallback()
+    if metadata_fallback_timer then
+        metadata_fallback_timer:kill()
+        metadata_fallback_timer = nil
+    end
+end
+
 function try_execute_profile()
     -- 1. Check Latch Conditions
     if state.profile_applied then return end
@@ -557,10 +570,22 @@ function try_execute_profile()
     if not state.metadata_ready then
         -- Waiting for Stremio metadata (Strict Latch)
         log("Latch: Waiting for Metadata...")
+        if not metadata_fallback_timer then
+            metadata_fallback_timer = mp.add_timeout(METADATA_FALLBACK_SECONDS, function()
+                metadata_fallback_timer = nil
+                if not state.profile_applied and not state.metadata_ready then
+                    log("Latch: Metadata did not arrive within " .. METADATA_FALLBACK_SECONDS ..
+                        "s, applying profile with defaults")
+                    state.metadata_ready = true
+                    try_execute_profile()
+                end
+            end)
+        end
         return
     end
     
     -- 2. Lock Latch
+    cancel_metadata_fallback()
     state.profile_applied = true
 
     
@@ -735,6 +760,7 @@ end)
 -- Reset state on new file
 mp.register_event('start-file', function()
     -- Clear previous state
+    cancel_metadata_fallback()
     state.profile_applied = false
     state.video_params_ready = false
     state.params_cache = nil

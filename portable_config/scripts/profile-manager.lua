@@ -546,8 +546,12 @@ end)
 -- ═══════════════════════════════════════════════════════════════════════════
 -- mpv's `${?glsl-shaders==path:ON}` can't be used for the OSD text: `==` compares
 -- the whole shader list string, so it reads OFF whenever any other shader (e.g.
--- the anime preset chain) is also loaded. Instead input.conf sends the toggle,
--- then a message here, and we inspect the real glsl-shaders / vf lists.
+-- the anime preset chain) is also loaded. On top of that, reading a property in
+-- the same instant as the change can return the previous value, so the OSD would
+-- always lag one press behind. The toggles therefore run here: apply the change,
+-- wait briefly for mpv to settle, then report the real glsl-shaders / vf state.
+
+local TOGGLE_SETTLE_SECONDS = 0.2
 
 local function osd_state(label, on, suffix)
     mp.osd_message(label .. ": " .. (on and "ON" or "OFF") .. (suffix and (" " .. suffix) or ""), 3)
@@ -560,50 +564,66 @@ local function shader_key(path)
     return (normalized:match("([^/]+)$") or normalized):lower()
 end
 
--- args: <shader path> <label> [suffix]
-mp.register_script_message("report-shader-state", function(path, label, suffix)
+local function shader_is_active(path)
     local target = shader_key(path)
     local native = mp.get_property_native("glsl-shaders")
     local raw = mp.get_property("glsl-shaders") or ""
-    local on = false
     if type(native) == "table" then
         for _, shader in ipairs(native) do
-            if shader_key(shader) == target then on = true break end
+            if shader_key(shader) == target then return true, raw end
         end
     end
     -- Fallback: plain substring match on the string form of the property
-    if not on and raw:gsub("\\", "/"):lower():find(target, 1, true) then on = true end
-    log("[Toggle] " .. label .. " target=" .. target .. " on=" .. tostring(on) .. " glsl-shaders=" .. raw)
-    osd_state(label, on, suffix)
-end)
+    local flat = raw:gsub("\\", "/"):lower()
+    return flat:find(target, 1, true) ~= nil, raw
+end
 
--- SVP manual toggle. Done here (not in input.conf) so the filter spec has a single
--- source of truth in VF_FILTERS, and so a failed toggle can be reported instead of
--- silently aborting the keybind's command chain.
--- args: [deint]  -> also toggles BWDIF deinterlacing
-local function toggle_svp(with_deint)
-    local spec = VF_FILTERS.svp_anime
-    if with_deint then spec = VF_FILTERS.bwdif .. "," .. spec end
-    local label = with_deint and "Deinterlace + SVP" or "SVP Frame Rate Conversion"
+local function svp_is_active()
+    local labels = {}
+    local on = false
+    for _, f in ipairs(mp.get_property_native("vf") or {}) do
+        labels[#labels + 1] = tostring(f.label or f.name)
+        if f.label == "SVP" and f.enabled ~= false then on = true end
+    end
+    return on, "vf=[" .. table.concat(labels, ",") .. "]"
+end
 
-    local ok, err = mp.commandv("vf", "toggle", spec)
+-- Run `command`, then show the settled state of `is_active` on the OSD.
+local function toggle_and_report(label, suffix, command, is_active)
+    local ok, err = mp.commandv((table.unpack or unpack)(command))
     if not ok then
         log("[Toggle] " .. label .. " failed: " .. tostring(err))
         mp.osd_message(label .. ": FAILED (" .. tostring(err) .. ")", 4)
         return
     end
-
-    local on = false
-    local labels = {}
-    for _, f in ipairs(mp.get_property_native("vf") or {}) do
-        labels[#labels + 1] = tostring(f.label or f.name)
-        if f.label == "SVP" and f.enabled ~= false then on = true end
-    end
-    log("[Toggle] " .. label .. " on=" .. tostring(on) .. " vf=[" .. table.concat(labels, ",") .. "]")
-    osd_state(label, on)
+    local immediate = is_active()
+    mp.add_timeout(TOGGLE_SETTLE_SECONDS, function()
+        local settled, detail = is_active()
+        log("[Toggle] " .. label .. " immediate=" .. tostring(immediate) ..
+            " settled=" .. tostring(settled) .. " " .. tostring(detail))
+        osd_state(label, settled, suffix)
+    end)
 end
 
-mp.register_script_message("toggle-svp", function(mode) toggle_svp(mode == "deint") end)
+-- args: <shader path> <label> [suffix]
+mp.register_script_message("toggle-shader", function(path, label, suffix)
+    toggle_and_report(label, suffix,
+        { "change-list", "glsl-shaders", "toggle", path },
+        function() return shader_is_active(path) end)
+end)
+
+-- args: [deint]  -> also toggles BWDIF deinterlacing
+-- The filter spec lives in VF_FILTERS so input.conf can't drift out of sync with
+-- the script file names again.
+mp.register_script_message("toggle-svp", function(mode)
+    local spec = VF_FILTERS.svp_anime
+    local label = "SVP Frame Rate Conversion"
+    if mode == "deint" then
+        spec = VF_FILTERS.bwdif .. "," .. spec
+        label = "Deinterlace + SVP"
+    end
+    toggle_and_report(label, nil, { "vf", "toggle", spec }, svp_is_active)
+end)
 
 
 -- ═══════════════════════════════════════════════════════════════════════════

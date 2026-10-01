@@ -49,6 +49,7 @@
     ULTRAWIDE_ZOOM: "kai-ultrawide-zoom",
     AUDIO_PRESET: "kai-audio-preset",
     SVP_GLOBAL: "kai-svp-global",
+    NVIDIA_VSR: "kai-nvidia-vsr",
   };
 
   // ... (existing helper functions) ...
@@ -476,6 +477,15 @@
   function setUltrawideZoom(value) {
     localStorage.setItem(STORAGE_KEYS.ULTRAWIDE_ZOOM, value.toString());
     console.log(`[MPV Settings] Ultrawide Zoom set to: ${value}`);
+  }
+
+  function getNvidiaVsr() {
+    return localStorage.getItem(STORAGE_KEYS.NVIDIA_VSR) === "true"; // Default OFF
+  }
+
+  function setNvidiaVsr(value) {
+    localStorage.setItem(STORAGE_KEYS.NVIDIA_VSR, value.toString());
+    console.log(`[MPV Settings] NVIDIA VSR set to: ${value}`);
   }
 
   function getAudioPreset() {
@@ -941,6 +951,23 @@
     );
     injectionFragment.appendChild(ultrawideToggle);
 
+    // 1e. NVIDIA Video Super Resolution
+    const nvidiaVsrToggle = createToggleOption(
+      "NVIDIA Video Super Resolution",
+      "AI upscaling of lower-resolution video to your display resolution. Applies to the next video you play.",
+      getNvidiaVsr(),
+      (val) => {
+        setNvidiaVsr(val);
+        sendConfigUpdate();
+      },
+    );
+    const nvidiaVsrNote = createNote(
+      "info",
+      "<strong>Note:</strong> Requires an NVIDIA RTX GPU with up-to-date drivers. Skipped for HDR content, when SVP interpolation is active, and in Vulkan mode.",
+    );
+    nvidiaVsrToggle.appendChild(nvidiaVsrNote);
+    injectionFragment.appendChild(nvidiaVsrToggle);
+
     // 2. Anime Enhancements section header
     const animeHeader = createSectionHeader(
       "Anime Enhancements",
@@ -1002,6 +1029,7 @@
       hdrTargetPeakInput, // HDR Target Peak textbox
       iccToggle, // iccNote is already inside
       ultrawideToggle,
+      nvidiaVsrToggle, // nvidiaVsrNote is already inside
     );
 
     // Wrap Anime Section
@@ -1437,6 +1465,7 @@
   window.MpvSettings.getAnime4kPreset = getAnime4kPreset;
   window.MpvSettings.getSvpEnabled = getSvpEnabled;
   window.MpvSettings.getSvpGlobal = getSvpGlobal;
+  window.MpvSettings.getNvidiaVsr = getNvidiaVsr;
   window.MpvSettings.getColorProfile = getColorProfile;
   window.MpvSettings.getIccProfile = getIccProfile;
 

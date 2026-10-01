@@ -65,6 +65,7 @@ This blend of automation and precision tuning transforms the project from a conf
 - **[Advanced Player Presets](https://github.com/allecsc/Stremio-Kai/wiki/%F0%9F%94%AC-Under-the-Hood#-visually-stunning-predefined-profiles)**
   - **Hi-Fi Audio** — Cinematic, bit-perfect lossless audio mixing for high-end sound stages with context-aware presets (Cinema/Anime/Night Mode).
   - **Visual Profiles** — Cycle between Kai (cinematic), Vivid (high contrast), and Original (neutral) color profiles.
+  - **NVIDIA RTX Video Super Resolution** — Optional AI upscaling of lower-resolution video to your display resolution on RTX GPUs. `[Optional - Toggleable]`
   - **Cinematic HDR** — Pure HDR passthrough ensuring a true-to-source, high-dynamic-range experience, with automatic HDR-to-SDR tonemapping for non-HDR displays.
 
 - **For Anime Enthusiasts**

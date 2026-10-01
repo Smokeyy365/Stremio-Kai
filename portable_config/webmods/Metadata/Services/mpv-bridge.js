@@ -157,6 +157,10 @@
       window.MpvSettings?.getUltrawideZoom?.() ||
       localStorage.getItem("kai-ultrawide-zoom") === "true"; // Default false
 
+    const nvidiaVsr =
+      window.MpvSettings?.getNvidiaVsr?.() ??
+      localStorage.getItem("kai-nvidia-vsr") === "true"; // Default false
+
     // v2.3 - Audio Preset (new)
     const audioPreset = localStorage.getItem("kai-audio-preset") || "off";
 
@@ -177,6 +181,7 @@
       osd_profile_messages: osdProfileMessages,
       vulkan_mode: vulkanMode,
       ultrawide_zoom: ultrawideZoom,
+      nvidia_vsr: nvidiaVsr,
       audio_preset: audioPreset,
     });
 
@@ -186,7 +191,7 @@
       metadata,
     ]);
     console.log(
-      `[MPV Bridge] Sent: ${imdbId} → anime:${isAnime}, Type:${contentType}, Audio:${audioPreset}, HDR:${hdrPassthrough} (Peak:${targetPeak}), Shaders:${shaderPreset}, SVP:${svpEnabled} (Global:${svpGlobal}), Color:${colorProfile}, ICC:${iccProfile}, Ultrawide:${ultrawideZoom}`,
+      `[MPV Bridge] Sent: ${imdbId} → anime:${isAnime}, Type:${contentType}, Audio:${audioPreset}, HDR:${hdrPassthrough} (Peak:${targetPeak}), Shaders:${shaderPreset}, SVP:${svpEnabled} (Global:${svpGlobal}), Color:${colorProfile}, ICC:${iccProfile}, Ultrawide:${ultrawideZoom}, VSR:${nvidiaVsr}`,
     );
   }
 

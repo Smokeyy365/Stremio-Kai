@@ -198,7 +198,8 @@ mp.register_script_message("anime-metadata", function(json_str)
             ", shaders=" .. tostring(stremio_metadata.shader_preset) ..
             ", svp=" .. tostring(stremio_metadata.svp_enabled) ..
             ", osd=" .. tostring(stremio_metadata.osd_profile_messages) ..
-            ", uw=" .. tostring(stremio_metadata.ultrawide_zoom))
+            ", uw=" .. tostring(stremio_metadata.ultrawide_zoom) ..
+            ", vsr=" .. tostring(stremio_metadata.nvidia_vsr))
             
         state.metadata_ready = true
         state.metadata_arrival = mp.get_time() -- Track arrival time to prevent race-condition wipes
@@ -379,6 +380,107 @@ local function apply_anime_vf(is_legacy, svp_enabled)
         log("Appending VF: SVP (Anime)")
         mp.commandv("vf", "append", VF_FILTERS.svp_anime)
     end
+end
+
+-- NVIDIA Video Super Resolution (RTX), via mpv's D3D11 video processor filter.
+-- Scale is display size / video size on the longer edge, floored to 0.1 and
+-- capped at 4x (the hardware limit). Approach based on the discussion in
+-- mpv-player/mpv#14804 and azumukupoe's "AutoVSR for MPV" gist.
+local VSR_LABEL = "vsr"
+local VSR_MAX_SCALE = 4.0
+
+local function compute_vsr_scale(video_params)
+    local dw = mp.get_property_native("display-width")
+    local dh = mp.get_property_native("display-height")
+    local vw, vh = video_params.w, video_params.h
+    if not (dw and dh and vw and vh) or vw <= 0 or vh <= 0 then return nil end
+    local scale = math.max(dw, dh) / math.max(vw, vh)
+    scale = math.floor(scale * 10 + 1e-9) / 10
+    return math.min(scale, VSR_MAX_SCALE)
+end
+
+-- Returns the scale to use, or nil plus the reason VSR is skipped.
+local function plan_nvidia_vsr(video_params, is_hdr, vulkan_mode, svp_active)
+    if vulkan_mode then return nil, "Vulkan rendering is on, VSR needs D3D11" end
+    if is_hdr then return nil, "HDR content" end
+    if svp_active then return nil, "SVP interpolation is on for this video" end
+    local scale = compute_vsr_scale(video_params)
+    if not scale then return nil, "display or video size unavailable" end
+    if scale <= 1.0 then return nil, "video already at or above display size" end
+    return scale
+end
+
+local function vsr_diagnostics()
+    return "hwdec-current=" .. tostring(mp.get_property("hwdec-current")) ..
+        ", gpu-api=" .. tostring(mp.get_property("gpu-api")) ..
+        ", gpu-context=" .. tostring(mp.get_property("current-gpu-context")) ..
+        ", vo=" .. tostring(mp.get_property("current-vo")) ..
+        ", display=" .. tostring(mp.get_property("display-width")) .. "x" .. tostring(mp.get_property("display-height")) ..
+        ", video=" .. tostring(mp.get_property("width")) .. "x" .. tostring(mp.get_property("height"))
+end
+
+local function vsr_failed(reason)
+    log("[VSR] FAILED: " .. reason .. " (" .. vsr_diagnostics() .. ")")
+    mp.osd_message("NVIDIA VSR unavailable: " .. reason, 5)
+end
+
+local function vsr_is_filtered()
+    for _, f in ipairs(mp.get_property_native("vf") or {}) do
+        if f.label == VSR_LABEL and f.enabled ~= false then return true end
+    end
+    return false
+end
+
+-- d3d11vpp needs frames kept on the GPU, i.e. plain D3D11 hardware decoding
+-- ("d3d11va-copy" copies frames back to system memory and won't work). The
+-- decoder only switches asynchronously after `hwdec` changes, so wait until mpv
+-- reports it before adding the filter.
+local VSR_HWDEC_TIMEOUT = 4.0
+
+local function apply_nvidia_vsr(scale)
+    local spec = string.format("@%s:d3d11vpp:scaling-mode=nvidia:scale=%.1f", VSR_LABEL, scale)
+
+    local function append_filter()
+        local ok, err = mp.commandv("vf", "append", spec)
+        if not ok then
+            vsr_failed("mpv rejected the d3d11vpp filter (" .. tostring(err) .. ")")
+            return
+        end
+        log("[VSR] Filter appended: " .. spec)
+        -- Verify it survived initialisation
+        mp.add_timeout(1.5, function()
+            if vsr_is_filtered() and mp.get_property("hwdec-current") == "d3d11va" then
+                log("[VSR] Active (" .. vsr_diagnostics() .. ")")
+            else
+                vsr_failed("filter is not active")
+            end
+        end)
+    end
+
+    if mp.get_property("hwdec-current") == "d3d11va" then
+        append_filter()
+        return
+    end
+
+    mp.set_property("hwdec", "d3d11va")
+    local waiting = true
+    local timer
+    local function on_hwdec(_, current)
+        if waiting and current == "d3d11va" then
+            waiting = false
+            mp.unobserve_property(on_hwdec)
+            if timer then timer:kill() end
+            append_filter()
+        end
+    end
+    mp.observe_property("hwdec-current", "string", on_hwdec)
+    timer = mp.add_timeout(VSR_HWDEC_TIMEOUT, function()
+        if not waiting then return end
+        waiting = false
+        mp.unobserve_property(on_hwdec)
+        mp.set_property("hwdec", "auto")
+        vsr_failed("D3D11 hardware decoding did not start")
+    end)
 end
 
 -- Extract filename from path/URL
@@ -621,6 +723,7 @@ function try_execute_profile()
     local svp_global = meta.svp_global or false
     local target_peak = meta.target_peak or "auto"
     local vulkan_mode = meta.vulkan_mode or false
+    local nvidia_vsr = meta.nvidia_vsr or false
 
     local is_legacy_anime = is_anime and is_interlaced and height <= 576
     local should_run_global_svp = not is_anime and svp_enabled and svp_global
@@ -695,6 +798,19 @@ function try_execute_profile()
     
     -- HWDEC & SVP Sync Engine Policy Application
     apply_svp_sync_policy(is_anime or should_run_global_svp)
+
+    -- NVIDIA VSR (after the hwdec policy above, since it needs D3D11 hwdec)
+    if nvidia_vsr then
+        local svp_active = (is_anime and svp_enabled) or should_run_global_svp
+        local vsr_scale, skip_reason = plan_nvidia_vsr(video_params, is_hdr, vulkan_mode, svp_active)
+        if vsr_scale then
+            table.insert(osd_parts, string.format("VSR x%.1f", vsr_scale))
+            apply_nvidia_vsr(vsr_scale)
+        else
+            log("[VSR] Skipped: " .. skip_reason .. " (" .. vsr_diagnostics() .. ")")
+            table.insert(osd_parts, "VSR off: " .. skip_reason)
+        end
+    end
     
     -- OSD
     local show_osd = meta.osd_profile_messages
